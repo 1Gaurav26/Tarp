@@ -113,7 +113,7 @@ See [`docs/ADVANCED_FEATURES.md`](docs/ADVANCED_FEATURES.md) and [`docs/PATENT_S
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/water-leak-localization.git
+git clone https://github.com/1Gaurav26/Tarp.git
 cd water-leak-localization
 
 # Create virtual environment (optional but recommended)
