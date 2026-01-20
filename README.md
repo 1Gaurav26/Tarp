@@ -501,4 +501,4 @@ If you encounter any issues, please:
 
 ---
 
-Made with 💧 by Your Team
+Made with 💧 by Our Team
