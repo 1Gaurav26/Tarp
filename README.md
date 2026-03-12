@@ -162,6 +162,7 @@ Leak Probs    Score
 ### 1. Installation
 
 ```bash
+# Clone the repository
 git clone https://github.com/1Gaurav26/Tarp.git
 cd Tarp
 
