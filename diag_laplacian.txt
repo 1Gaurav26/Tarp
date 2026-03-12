@@ -1,0 +1,33 @@
+  Warning: Network has 5 components. Using largest (657 of 785 nodes).
+============================================================
+CONDUCTANCE & LAPLACIAN DIAGNOSTICS
+============================================================
+Nodes: 657, Edges: 762
+Reservoirs: []
+Connected: True
+
+--- Conductances (after normalization) ---
+  min=0.500018, max=1.762431, mean=0.566466
+  ratio max/min = 3.52
+
+--- Reservoir Connectivity ---
+  Free nodes connected to any reservoir: 0/657
+
+--- Laplacian Matrix ---
+  Shape: (657, 657)
+  nnz: 2181
+  Diagonal: min=0.514163, max=3.347003
+  Very small diag (<0.01): 0
+  Zero diag: 0
+
+
+--- Test Solve ---
+  RHS: min=1.0000, max=1.0000
+  Solution h: min=-1156000653989622016.0000, max=-1156000653989611520.0000, mean=-1156000653989616896.0000
+  *** SOLUTION BLOWS UP! ***
+  657 nodes have |h| > 1e6
+    Node 0: h=-1.16e+18, diag=1.262977, degree=2
+    Node 1: h=-1.16e+18, diag=1.822164, degree=3
+    Node 2: h=-1.16e+18, diag=1.952823, degree=3
+    Node 3: h=-1.16e+18, diag=0.853364, degree=1
+    Node 4: h=-1.16e+18, diag=3.347003, degree=2

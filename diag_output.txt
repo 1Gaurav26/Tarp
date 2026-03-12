@@ -1,0 +1,25 @@
+============================================================
+DATASET DIAGNOSTICS
+============================================================
+Nodes: 785, Sensors: 156 (19.9%)
+Leak samples: 3968/5000
+
+Pressure: mean=1882.9432, std=644.1376, range=[50.0000, 3606.8530]
+
+Feature 0 (Normalized pressure): mean=0.098271, std=1.032815
+Feature 6 (Pressure deviation): mean=0.000000, std=1.031431
+
+--- Raw Pressure Impact of Leaks ---
+  leak_mag=   0.5 -> max |delta_p| = 3.943171, noise_std=0.1, SNR=39.432
+  leak_mag=   1.0 -> max |delta_p| = 7.886341, noise_std=0.1, SNR=78.863
+  leak_mag=   2.0 -> max |delta_p| = 15.772683, noise_std=0.1, SNR=157.727
+  leak_mag=   5.0 -> max |delta_p| = 39.431707, noise_std=0.1, SNR=394.317
+  leak_mag=  10.0 -> max |delta_p| = 78.863414, noise_std=0.1, SNR=788.634
+  leak_mag=  20.0 -> max |delta_p| = 157.726828, noise_std=0.1, SNR=1577.268
+  leak_mag=  50.0 -> max |delta_p| = 394.317070, noise_std=0.1, SNR=3943.171
+  leak_mag= 100.0 -> max |delta_p| = 788.634139, noise_std=0.1, SNR=7886.341
+
+--- Noise vs Signal ---
+  noise_std = 0.1
+  pressure_std = 644.137634
+  Noise / pressure_std = 0.000155

@@ -245,9 +245,8 @@ def plot_graph_plotly(
             symbol=node_symbols,
             colorbar=dict(
                 thickness=15,
-                title='Leak Probability',
+                title=dict(text='Leak Probability', side='right'),
                 xanchor='left',
-                titleside='right'
             ),
             line=dict(
                 width=[3 if sensor_mask[i] > 0.5 else 0 for i in G.nodes()],
@@ -282,8 +281,7 @@ def plot_graph_plotly(
     fig = go.Figure(
         data=[edge_trace, node_trace, top_k_trace],
         layout=go.Layout(
-            title=title,
-            titlefont_size=16,
+            title=dict(text=title, font=dict(size=16)),
             showlegend=True,
             hovermode='closest',
             xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),

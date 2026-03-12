@@ -303,6 +303,7 @@ def main():
             hidden_dim=config.model.hidden_dim,
             num_layers=config.model.num_layers,
             edge_dim=edge_dim,
+            num_heads=config.model.num_heads,
             dropout=0.0,  # No dropout during evaluation
         ).to(device)
         

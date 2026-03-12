@@ -1,59 +1,65 @@
-# Water Leak Localization - Default Configuration
-# ================================================
+# Water Leak Localization - Production Configuration
+# ===================================================
 
 # Graph Parameters
 graph:
   num_nodes: 200
-  edge_probability: 0.08  # For random graph generation
-  reservoir_nodes: 2      # Number of fixed-head reservoir nodes
+  edge_probability: 0.08
+  reservoir_nodes: 2
   min_conductance: 0.5
   max_conductance: 2.0
 
 # Sensor Configuration
 sensors:
-  ratio: 0.2              # Fraction of nodes that are sensors
-  noise_std: 0.1          # Gaussian noise standard deviation
+  ratio: 0.2
+  noise_std: 0.1
 
 # Demand Distribution
 demand:
   mean: 1.0
   std: 0.5
-  reservoir_head: 50.0    # Fixed head at reservoir nodes (meters)
+  reservoir_head: 50.0
 
 # Leak Parameters
 leak:
-  probability: 0.8        # Probability that a sample has a leak
+  probability: 0.8
   magnitude_min: 0.5
   magnitude_max: 5.0
 
-# Dataset Generation
+# Dataset Generation (larger for production)
 data:
-  train_samples: 2000
-  val_samples: 400
-  test_samples: 400
+  train_samples: 5000
+  val_samples: 800
+  test_samples: 800
   output_dir: "data"
 
-# Training Parameters
+# Training Parameters (tuned for convergence)
 training:
-  batch_size: 32
-  epochs: 50
-  learning_rate: 0.001
-  weight_decay: 1.0e-5
-  patience: 10            # Early stopping patience
-  focal_gamma: 2.0        # Focal loss gamma (0 = BCE)
-  no_leak_weight: 0.5     # Weight for no-leak class
+  batch_size: 64
+  epochs: 100
+  learning_rate: 0.0005
+  weight_decay: 1.0e-4
+  patience: 15
+  focal_gamma: 2.0
+  no_leak_weight: 0.5
+  grad_accum_steps: 2        # Effective batch = 128
+  use_amp: true              # Mixed-precision training on GPU
+  scheduler: "cosine"        # cosine | plateau
+  warmup_epochs: 5
 
-# Model Architecture
+# Model Architecture (larger capacity)
 model:
-  hidden_dim: 64
-  num_layers: 3
-  dropout: 0.1
-  edge_dim: 2             # Edge features: conductance, length
+  in_dim: 7                  # Enriched 7-dim features
+  hidden_dim: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.15
+  edge_dim: 2
 
 # Stage 2 Parameters
 stage2:
-  top_k: 5                # Number of top candidates to consider
-  use_physics: true       # Use physics-based magnitude estimation
+  top_k: 5
+  use_physics: true
 
 # Evaluation
 eval:

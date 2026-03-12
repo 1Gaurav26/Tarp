@@ -1,11 +1,14 @@
 """
-Dataset Generation for Water Leak Localization.
+Dataset Generation for Water Leak Localization (Production).
 
-Generates synthetic datasets with:
-- Random demand patterns
-- Optional leak injection at nodes
-- Noisy sensor observations
-- Labels for leak node and magnitude
+Generates synthetic datasets with enriched 7-dim node features:
+1. Measured pressure (normalized, 0 for non-sensors)
+2. Sensor mask (binary)
+3. Node degree (normalized)
+4. Distance to nearest reservoir (normalized)
+5. Is reservoir flag
+6. Mean neighbor conductance (normalized)
+7. Pressure deviation from global mean
 """
 
 from pathlib import Path
@@ -25,35 +28,21 @@ from ..utils.graph import (
     get_node_positions,
 )
 
+# Number of node feature dimensions in the enriched format
+NODE_FEAT_DIM = 7
+
 
 class LeakDataset(Dataset):
     """
     PyTorch Dataset for water leak localization.
     
-    Each sample contains:
-    - node_features: [num_nodes, feat_dim] with (pressure_or_0, sensor_mask, ...)
-    - edge_index: [2, num_edges*2] bidirectional edge indices
-    - edge_attr: [num_edges*2, 2] edge features (conductance, length)
-    - y_node: [num_nodes] one-hot leak node (all zeros if no leak)
-    - has_leak: scalar (1 if leak, 0 if no leak)
-    - leak_node: scalar index of leak node (-1 if no leak)
-    - leak_magnitude: scalar magnitude of leak (0 if no leak)
-    - sensor_mask: [num_nodes] binary mask of sensor nodes
+    Each sample contains 7-dim node features and associated labels.
     """
     
-    def __init__(
-        self,
-        data_path: str,
-    ):
-        """
-        Load dataset from file.
-        
-        Args:
-            data_path: Path to .pt file containing the dataset.
-        """
+    def __init__(self, data_path: str):
         self.data = torch.load(data_path, weights_only=False)
         
-        # Store graph structure (shared across samples)
+        # Shared graph structure
         self.edge_index = self.data["edge_index"]
         self.edge_attr = self.data["edge_attr"]
         self.sensor_mask = self.data["sensor_mask"]
@@ -68,7 +57,6 @@ class LeakDataset(Dataset):
         self.leak_nodes = self.data["leak_nodes"]
         self.leak_magnitudes = self.data["leak_magnitudes"]
         
-        # Optional: store full pressures for debugging
         self.full_pressures = self.data.get("full_pressures", None)
         self.demands = self.data.get("demands", None)
     
@@ -91,16 +79,67 @@ class LeakDataset(Dataset):
         """Reconstruct NetworkX graph from edge_index."""
         G = nx.Graph()
         G.add_nodes_from(range(self.num_nodes))
-        
         edges = self.edge_index.numpy().T
-        # Only add unique edges (edge_index has bidirectional)
         unique_edges = set()
         for i, j in edges:
             if (j, i) not in unique_edges:
                 unique_edges.add((i, j))
-        
         G.add_edges_from(unique_edges)
         return G
+
+
+def _compute_static_features(
+    G: nx.Graph,
+    num_nodes: int,
+    sensor_mask: np.ndarray,
+    reservoir_nodes: List[int],
+    edge_conductance: Dict,
+) -> np.ndarray:
+    """
+    Compute static (per-graph, not per-sample) node features.
+    
+    Returns:
+        static_feats: [num_nodes, 4] array of:
+            - node_degree (normalized)
+            - distance_to_nearest_reservoir (normalized)
+            - is_reservoir (binary)
+            - mean_neighbor_conductance (normalized)
+    """
+    static = np.zeros((num_nodes, 4), dtype=np.float32)
+    
+    # 1. Node degree (normalized)
+    degrees = np.array([G.degree(n) for n in range(num_nodes)], dtype=np.float32)
+    max_deg = degrees.max() if degrees.max() > 0 else 1.0
+    static[:, 0] = degrees / max_deg
+    
+    # 2. Distance to nearest reservoir (normalized BFS distance)
+    reservoir_set = set(reservoir_nodes)
+    if len(reservoir_set) > 0:
+        # Multi-source BFS from all reservoirs
+        dist = np.full(num_nodes, fill_value=float('inf'), dtype=np.float32)
+        for r in reservoir_nodes:
+            lengths = nx.single_source_shortest_path_length(G, r)
+            for node, d in lengths.items():
+                dist[node] = min(dist[node], d)
+        max_dist = dist[dist < float('inf')].max() if np.any(dist < float('inf')) else 1.0
+        dist[dist == float('inf')] = max_dist + 1
+        static[:, 1] = dist / (max_dist + 1)
+    
+    # 3. Is reservoir (binary)
+    for r in reservoir_nodes:
+        static[r, 2] = 1.0
+    
+    # 4. Mean neighbor conductance (normalized)
+    mean_cond = np.zeros(num_nodes, dtype=np.float32)
+    for n in range(num_nodes):
+        neighbors = list(G.neighbors(n))
+        if len(neighbors) > 0:
+            conds = [edge_conductance.get((n, nb), 1.0) for nb in neighbors]
+            mean_cond[n] = np.mean(conds)
+    max_cond = mean_cond.max() if mean_cond.max() > 0 else 1.0
+    static[:, 3] = mean_cond / max_cond
+    
+    return static
 
 
 def generate_dataset(
@@ -123,44 +162,22 @@ def generate_dataset(
     show_progress: bool = True,
 ) -> Dict[str, torch.Tensor]:
     """
-    Generate a synthetic dataset for water leak localization.
-    
-    Args:
-        num_samples: Number of samples to generate.
-        num_nodes: Number of nodes in the graph.
-        edge_probability: Probability of edge creation.
-        num_reservoirs: Number of reservoir nodes.
-        sensor_ratio: Fraction of nodes that are sensors.
-        demand_mean: Mean demand value.
-        demand_std: Standard deviation of demand.
-        reservoir_head: Fixed head at reservoirs.
-        leak_probability: Probability of a sample having a leak.
-        leak_magnitude_min: Minimum leak magnitude.
-        leak_magnitude_max: Maximum leak magnitude.
-        noise_std: Sensor noise standard deviation.
-        min_conductance: Minimum pipe conductance.
-        max_conductance: Maximum pipe conductance.
-        seed: Random seed.
-        output_path: Optional path to save the dataset.
-        show_progress: Whether to show progress bar.
-    
-    Returns:
-        Dictionary containing the dataset.
+    Generate a synthetic dataset with enriched 7-dim node features.
     """
     rng = np.random.RandomState(seed)
     
     # Create graph
     G = create_random_graph(num_nodes, edge_probability, seed=seed)
     
-    # Select reservoir and sensor nodes
+    # Select nodes
     reservoir_nodes = select_reservoir_nodes(G, num_reservoirs, seed=seed)
     sensor_nodes = select_sensor_nodes(G, sensor_ratio, exclude_nodes=reservoir_nodes, seed=seed)
     
-    # Generate random conductances
+    # Random conductances
     num_edges = G.number_of_edges()
     conductances = rng.uniform(min_conductance, max_conductance, size=num_edges)
     
-    # Initialize simulator
+    # Simulator
     simulator = HydraulicSimulator(
         G=G,
         reservoir_nodes=reservoir_nodes,
@@ -169,21 +186,34 @@ def generate_dataset(
         seed=seed,
     )
     
-    # Get edge features
+    # Edge features
     edge_index_np, edge_attr_np = simulator.get_edge_features()
     edge_index = torch.tensor(edge_index_np, dtype=torch.long)
     edge_attr = torch.tensor(edge_attr_np, dtype=torch.float32)
     
-    # Create sensor mask
+    # Sensor mask
     sensor_mask = np.zeros(num_nodes, dtype=np.float32)
     sensor_mask[sensor_nodes] = 1.0
     sensor_mask_tensor = torch.tensor(sensor_mask, dtype=torch.float32)
     
-    # Node positions for visualization
+    # Positions for visualization
     positions = get_node_positions(G, layout="spring")
     
-    # Candidate nodes for leaks (exclude reservoirs)
+    # Compute static features (degree, reservoir distance, is_reservoir, mean_cond)
+    static_feats = _compute_static_features(
+        G, num_nodes, sensor_mask, reservoir_nodes, simulator.edge_conductance
+    )
+    
+    # Leak candidates (exclude reservoirs)
     leak_candidates = [n for n in range(num_nodes) if n not in reservoir_nodes]
+    
+    # Pre-compute baseline pressure for normalization reference
+    baseline_demand = np.full(num_nodes, demand_mean, dtype=np.float64)
+    for r in reservoir_nodes:
+        baseline_demand[r] = 0.0
+    baseline_heads = simulator.solve(baseline_demand)
+    pressure_mean = baseline_heads.mean()
+    pressure_std = baseline_heads.std() if baseline_heads.std() > 0 else 1.0
     
     # Generate samples
     all_node_features = []
@@ -199,44 +229,53 @@ def generate_dataset(
         iterator = tqdm(iterator, desc="Generating samples")
     
     for _ in iterator:
-        # Generate random demand
+        # Random demand
         demand = simulator.generate_demand(mean=demand_mean, std=demand_std)
         
-        # Decide if this sample has a leak
+        # Leak decision
         has_leak = rng.random() < leak_probability
         
         if has_leak:
-            # Select random leak node
             leak_node = rng.choice(leak_candidates)
             leak_magnitude = rng.uniform(leak_magnitude_min, leak_magnitude_max)
         else:
             leak_node = -1
             leak_magnitude = 0.0
         
-        # Solve for pressures
+        # Solve
         heads = simulator.solve(
             demand,
             leak_node=leak_node if has_leak else None,
             leak_magnitude=leak_magnitude,
         )
         
-        # Get noisy sensor readings
+        # Noisy sensor readings
         sensor_readings = simulator.get_sensor_readings(heads, sensor_nodes, noise_std)
         
-        # Build node features
-        # Feature: [measured_pressure_or_0, sensor_mask]
-        node_features = np.zeros((num_nodes, 2), dtype=np.float32)
-        node_features[:, 1] = sensor_mask  # Sensor mask as feature
+        # Build enriched 7-dim node features
+        node_features = np.zeros((num_nodes, NODE_FEAT_DIM), dtype=np.float32)
         
+        # Feature 0: Normalized measured pressure (0 for non-sensor nodes)
         for idx, s_node in enumerate(sensor_nodes):
-            node_features[s_node, 0] = sensor_readings[idx]
+            node_features[s_node, 0] = (sensor_readings[idx] - pressure_mean) / pressure_std
         
-        # Build labels
+        # Feature 1: Sensor mask
+        node_features[:, 1] = sensor_mask
+        
+        # Features 2-5: Static features (degree, reservoir_dist, is_reservoir, mean_cond)
+        node_features[:, 2:6] = static_feats
+        
+        # Feature 6: Pressure deviation from global sensor mean
+        if len(sensor_readings) > 0:
+            global_sensor_mean = sensor_readings.mean()
+            for idx, s_node in enumerate(sensor_nodes):
+                node_features[s_node, 6] = (sensor_readings[idx] - global_sensor_mean) / pressure_std
+        
+        # Labels
         y_node = np.zeros(num_nodes, dtype=np.float32)
         if has_leak:
             y_node[leak_node] = 1.0
         
-        # Store
         all_node_features.append(torch.tensor(node_features, dtype=torch.float32))
         all_y_node.append(torch.tensor(y_node, dtype=torch.float32))
         all_has_leak.append(torch.tensor(1.0 if has_leak else 0.0, dtype=torch.float32))
@@ -245,7 +284,7 @@ def generate_dataset(
         all_full_pressures.append(torch.tensor(heads, dtype=torch.float32))
         all_demands.append(torch.tensor(demand, dtype=torch.float32))
     
-    # Stack all samples
+    # Stack
     dataset = {
         "node_features": torch.stack(all_node_features),
         "edge_index": edge_index,
@@ -277,20 +316,8 @@ def create_dataloader(
     shuffle: bool = True,
     num_workers: int = 0,
 ) -> DataLoader:
-    """
-    Create a DataLoader from a saved dataset.
-    
-    Args:
-        data_path: Path to .pt file.
-        batch_size: Batch size.
-        shuffle: Whether to shuffle data.
-        num_workers: Number of worker processes.
-    
-    Returns:
-        PyTorch DataLoader.
-    """
+    """Create a DataLoader from a saved dataset."""
     dataset = LeakDataset(data_path)
-    
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -301,15 +328,10 @@ def create_dataloader(
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-    """
-    Collate function for batching graph data.
-    
-    Since all samples share the same graph structure, we just stack
-    the node features and labels.
-    """
+    """Collate function for batching graph data."""
     return {
         "node_features": torch.stack([b["node_features"] for b in batch]),
-        "edge_index": batch[0]["edge_index"],  # Same for all samples
+        "edge_index": batch[0]["edge_index"],
         "edge_attr": batch[0]["edge_attr"],
         "y_node": torch.stack([b["y_node"] for b in batch]),
         "has_leak": torch.stack([b["has_leak"] for b in batch]),

@@ -255,3 +255,198 @@ def extract_subgraph(
     subgraph = nx.relabel_nodes(subgraph, node_mapping)
     
     return subgraph, node_mapping
+
+
+def load_network_from_inp(
+    inp_path: str,
+) -> Tuple[nx.Graph, List[int], Dict]:
+    """
+    Load a water distribution network from an EPANET .inp file.
+
+    Uses the `wntr` library to parse the .inp file and extracts:
+    - NetworkX graph with integer node IDs
+    - Reservoir and tank node indices
+    - Pipe conductances derived from Hazen-Williams coefficients
+    - Node positions from EPANET coordinates (if available)
+
+    Args:
+        inp_path: Path to the .inp file.
+
+    Returns:
+        Tuple of (G, reservoir_nodes, metadata) where:
+        - G: NetworkX Graph with integer node IDs
+        - reservoir_nodes: List of reservoir/tank node integer indices
+        - metadata: Dict with keys:
+            - 'conductances': np.array of per-edge conductance values
+            - 'name_to_id': Dict mapping original node names to integer IDs
+            - 'id_to_name': Dict mapping integer IDs to original node names
+            - 'positions': Dict mapping integer IDs to (x, y) tuples
+            - 'num_nodes': int
+            - 'num_edges': int
+    """
+    try:
+        import wntr
+    except ImportError:
+        raise ImportError(
+            "wntr is required for loading .inp files. "
+            "Install it with: pip install wntr"
+        )
+
+    # Load the EPANET model
+    wn = wntr.network.WaterNetworkModel(inp_path)
+
+    # Build node name -> integer ID mapping
+    all_node_names = wn.node_name_list
+    name_to_id = {name: i for i, name in enumerate(all_node_names)}
+    id_to_name = {i: name for name, i in name_to_id.items()}
+
+    # Identify reservoir + tank nodes (both act as fixed-head boundaries)
+    reservoir_names = wn.reservoir_name_list + wn.tank_name_list
+    reservoir_nodes = sorted([name_to_id[n] for n in reservoir_names])
+
+    # Build the graph with integer node IDs
+    # IMPORTANT: Include ALL link types (pipes, valves, pumps) — not just pipes.
+    # In many real networks (incl. L-Town), reservoirs connect to junctions
+    # through valves or pumps. Skipping these creates disconnected components
+    # that exclude reservoirs, making the Laplacian singular.
+    num_nodes = len(all_node_names)
+    G = nx.Graph()
+    G.add_nodes_from(range(num_nodes))
+
+    raw_conductances = []
+
+    # 1. Pipes — compute conductance from physical properties
+    for pipe_name in wn.pipe_name_list:
+        pipe = wn.get_link(pipe_name)
+        start_id = name_to_id[pipe.start_node_name]
+        end_id = name_to_id[pipe.end_node_name]
+
+        diameter = pipe.diameter  # meters
+        length = max(pipe.length, 1.0)  # meters (avoid div by 0)
+        roughness = pipe.roughness  # Hazen-Williams C coefficient
+
+        g = roughness * (diameter ** 2) / length
+        raw_conductances.append(g)
+        G.add_edge(start_id, end_id)
+
+    # 2. Valves — treat as high-conductance connections (open valves)
+    for valve_name in wn.valve_name_list:
+        valve = wn.get_link(valve_name)
+        start_id = name_to_id[valve.start_node_name]
+        end_id = name_to_id[valve.end_node_name]
+        if not G.has_edge(start_id, end_id):
+            raw_conductances.append(None)  # placeholder, will be set to high value
+            G.add_edge(start_id, end_id)
+
+    # 3. Pumps — treat as high-conductance connections
+    for pump_name in wn.pump_name_list:
+        pump = wn.get_link(pump_name)
+        start_id = name_to_id[pump.start_node_name]
+        end_id = name_to_id[pump.end_node_name]
+        if not G.has_edge(start_id, end_id):
+            raw_conductances.append(None)  # placeholder
+            G.add_edge(start_id, end_id)
+
+    # Replace None placeholders (valves/pumps) with max pipe conductance
+    pipe_conductances = [g for g in raw_conductances if g is not None]
+    if pipe_conductances:
+        max_pipe_g = max(pipe_conductances)
+    else:
+        max_pipe_g = 1.0
+    conductances = np.array(
+        [g if g is not None else max_pipe_g * 2.0 for g in raw_conductances],
+        dtype=np.float64,
+    )
+
+    # Normalize conductances to a reasonable range [0.5, 2.0]
+    if conductances.max() > conductances.min():
+        c_min, c_max = conductances.min(), conductances.max()
+        conductances = 0.5 + 1.5 * (conductances - c_min) / (c_max - c_min)
+    else:
+        conductances = np.ones_like(conductances)
+
+    # Extract node positions from EPANET coordinates
+    positions = {}
+    for name, node_id in name_to_id.items():
+        node = wn.get_node(name)
+        coords = node.coordinates
+        if coords and coords != (0, 0):
+            positions[node_id] = (float(coords[0]), float(coords[1]))
+        else:
+            positions[node_id] = (0.0, 0.0)
+
+    # Normalize positions to [0, 1] range for visualization
+    if positions:
+        xs = [p[0] for p in positions.values()]
+        ys = [p[1] for p in positions.values()]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        x_range = x_max - x_min if x_max > x_min else 1.0
+        y_range = y_max - y_min if y_max > y_min else 1.0
+        positions = {
+            nid: ((x - x_min) / x_range, (y - y_min) / y_range)
+            for nid, (x, y) in positions.items()
+        }
+
+    # Ensure graph is connected — prefer the component containing reservoirs
+    if not nx.is_connected(G):
+        components = list(nx.connected_components(G))
+        # Find the component that contains reservoir/tank nodes
+        res_set = set(reservoir_nodes)
+        best_cc = None
+        for cc in components:
+            if cc & res_set:
+                if best_cc is None or len(cc) > len(best_cc):
+                    best_cc = cc
+        # Fallback to largest component if no reservoirs found
+        if best_cc is None:
+            best_cc = max(components, key=len)
+
+        if len(best_cc) < num_nodes:
+            print(
+                f"  Warning: Network has {len(components)} components. "
+                f"Using reservoir-connected component "
+                f"({len(best_cc)} of {num_nodes} nodes)."
+            )
+            # Remap to contiguous IDs
+            old_to_new = {old: new for new, old in enumerate(sorted(best_cc))}
+            G_new = nx.Graph()
+            G_new.add_nodes_from(range(len(best_cc)))
+
+            new_conductances = []
+            for idx, (u, v) in enumerate(list(G.edges())):
+                if u in best_cc and v in best_cc:
+                    G_new.add_edge(old_to_new[u], old_to_new[v])
+                    new_conductances.append(conductances[idx])
+
+            conductances = np.array(new_conductances, dtype=np.float64)
+            reservoir_nodes = sorted([
+                old_to_new[r] for r in reservoir_nodes if r in best_cc
+            ])
+            positions = {
+                old_to_new[nid]: pos for nid, pos in positions.items()
+                if nid in best_cc
+            }
+            new_name_to_id = {}
+            new_id_to_name = {}
+            for name, old_id in name_to_id.items():
+                if old_id in best_cc:
+                    new_id = old_to_new[old_id]
+                    new_name_to_id[name] = new_id
+                    new_id_to_name[new_id] = name
+            name_to_id = new_name_to_id
+            id_to_name = new_id_to_name
+            G = G_new
+            num_nodes = G.number_of_nodes()
+
+    metadata = {
+        "conductances": conductances,
+        "name_to_id": name_to_id,
+        "id_to_name": id_to_name,
+        "positions": positions,
+        "num_nodes": num_nodes,
+        "num_edges": G.number_of_edges(),
+        "source": inp_path,
+    }
+
+    return G, reservoir_nodes, metadata

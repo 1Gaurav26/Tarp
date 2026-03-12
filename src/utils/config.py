@@ -56,21 +56,27 @@ class DataConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters."""
-    batch_size: int = 32
-    epochs: int = 50
-    learning_rate: float = 0.001
-    weight_decay: float = 1e-5
-    patience: int = 10
+    batch_size: int = 64
+    epochs: int = 100
+    learning_rate: float = 0.0005
+    weight_decay: float = 1e-4
+    patience: int = 15
     focal_gamma: float = 2.0
     no_leak_weight: float = 0.5
+    grad_accum_steps: int = 2
+    use_amp: bool = True
+    scheduler: str = "cosine"
+    warmup_epochs: int = 5
 
 
 @dataclass
 class ModelConfig:
     """Model architecture parameters."""
-    hidden_dim: int = 64
-    num_layers: int = 3
-    dropout: float = 0.1
+    in_dim: int = 7
+    hidden_dim: int = 128
+    num_layers: int = 4
+    num_heads: int = 4
+    dropout: float = 0.15
     edge_dim: int = 2
 
 
