@@ -68,7 +68,9 @@ class HydraulicSimulator:
         if conductances is not None:
             self.conductances = conductances
         else:
-            self.conductances = self.rng.uniform(0.5, 2.0, size=len(self.edges))
+            self.conductances = np.zeros(len(self.edges))
+            for idx, (i, j) in enumerate(self.edges):
+                self.conductances[idx] = G[i][j].get('conductance', self.rng.uniform(0.5, 2.0))
         
         # Build edge-to-conductance mapping
         self.edge_conductance = {}

@@ -1,0 +1,13 @@
+tarp/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+test_out.txt
+diag_*.txt
+*.md

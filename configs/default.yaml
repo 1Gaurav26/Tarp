@@ -11,7 +11,7 @@ graph:
 
 # Sensor Configuration
 sensors:
-  ratio: 0.2
+  ratio: 0.4
   noise_std: 0.1
 
 # Demand Distribution
@@ -28,18 +28,18 @@ leak:
 
 # Dataset Generation (larger for production)
 data:
-  train_samples: 5000
-  val_samples: 800
-  test_samples: 800
+  train_samples: 50000
+  val_samples: 5000
+  test_samples: 5000
   output_dir: "data"
 
 # Training Parameters (tuned for convergence)
 training:
   batch_size: 64
-  epochs: 100
-  learning_rate: 0.0005
+  epochs: 150
+  learning_rate: 0.0003
   weight_decay: 1.0e-4
-  patience: 15
+  patience: 30
   focal_gamma: 2.0
   no_leak_weight: 0.5
   grad_accum_steps: 2        # Effective batch = 128
@@ -50,8 +50,8 @@ training:
 # Model Architecture (larger capacity)
 model:
   in_dim: 7                  # Enriched 7-dim features
-  hidden_dim: 128
-  num_layers: 4
+  hidden_dim: 256
+  num_layers: 5
   num_heads: 4
   dropout: 0.15
   edge_dim: 2

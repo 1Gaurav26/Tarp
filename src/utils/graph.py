@@ -327,7 +327,7 @@ def load_network_from_inp(
 
         g = roughness * (diameter ** 2) / length
         raw_conductances.append(g)
-        G.add_edge(start_id, end_id)
+        G.add_edge(start_id, end_id, raw_g=g)
 
     # 2. Valves — treat as high-conductance connections (open valves)
     for valve_name in wn.valve_name_list:
@@ -336,7 +336,7 @@ def load_network_from_inp(
         end_id = name_to_id[valve.end_node_name]
         if not G.has_edge(start_id, end_id):
             raw_conductances.append(None)  # placeholder, will be set to high value
-            G.add_edge(start_id, end_id)
+            G.add_edge(start_id, end_id, raw_g=None)
 
     # 3. Pumps — treat as high-conductance connections
     for pump_name in wn.pump_name_list:
@@ -345,7 +345,7 @@ def load_network_from_inp(
         end_id = name_to_id[pump.end_node_name]
         if not G.has_edge(start_id, end_id):
             raw_conductances.append(None)  # placeholder
-            G.add_edge(start_id, end_id)
+            G.add_edge(start_id, end_id, raw_g=None)
 
     # Replace None placeholders (valves/pumps) with max pipe conductance
     pipe_conductances = [g for g in raw_conductances if g is not None]
@@ -353,17 +353,27 @@ def load_network_from_inp(
         max_pipe_g = max(pipe_conductances)
     else:
         max_pipe_g = 1.0
-    conductances = np.array(
-        [g if g is not None else max_pipe_g * 2.0 for g in raw_conductances],
-        dtype=np.float64,
-    )
-
-    # Normalize conductances to a reasonable range [0.5, 2.0]
-    if conductances.max() > conductances.min():
-        c_min, c_max = conductances.min(), conductances.max()
-        conductances = 0.5 + 1.5 * (conductances - c_min) / (c_max - c_min)
+        
+    # Store normalized conductances directly in the graph edges
+    # First apply min-max scaling to [0.5, 2.0] for non-None, and make None = 2.0 * max_pipe_g scaled
+    if len(pipe_conductances) > 0 and max(pipe_conductances) > min(pipe_conductances):
+        c_min, c_max = min(pipe_conductances), max(pipe_conductances)
     else:
-        conductances = np.ones_like(conductances)
+        c_min, c_max = 0.0, 1.0
+        
+    for u, v, data in G.edges(data=True):
+        raw_g = data.get('raw_g')
+        if raw_g is None:
+            g = max_pipe_g * 2.0
+        else:
+            g = raw_g
+            
+        if c_max > c_min:
+            norm_g = 0.5 + 1.5 * (g - c_min) / (c_max - c_min)
+        else:
+            norm_g = 1.0
+            
+        G[u][v]['conductance'] = norm_g
 
     # Extract node positions from EPANET coordinates
     positions = {}
@@ -413,13 +423,10 @@ def load_network_from_inp(
             G_new = nx.Graph()
             G_new.add_nodes_from(range(len(best_cc)))
 
-            new_conductances = []
             for idx, (u, v) in enumerate(list(G.edges())):
                 if u in best_cc and v in best_cc:
-                    G_new.add_edge(old_to_new[u], old_to_new[v])
-                    new_conductances.append(conductances[idx])
+                    G_new.add_edge(old_to_new[u], old_to_new[v], conductance=G[u][v]['conductance'])
 
-            conductances = np.array(new_conductances, dtype=np.float64)
             reservoir_nodes = sorted([
                 old_to_new[r] for r in reservoir_nodes if r in best_cc
             ])
@@ -438,6 +445,9 @@ def load_network_from_inp(
             id_to_name = new_id_to_name
             G = G_new
             num_nodes = G.number_of_nodes()
+
+    # Now we can safely build the parallel contiguous array by iterating the edges once!
+    conductances = np.array([G[u][v]['conductance'] for u, v in G.edges()], dtype=np.float64)
 
     metadata = {
         "conductances": conductances,

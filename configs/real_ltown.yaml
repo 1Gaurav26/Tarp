@@ -33,15 +33,15 @@ leak:
 
 # Dataset Generation
 data:
-  train_samples: 5000
-  val_samples: 800
-  test_samples: 800
+  train_samples: 50000
+  val_samples: 5000
+  test_samples: 5000
   output_dir: "data/real"
 
 # Training Parameters (adjusted for larger network)
 training:
   batch_size: 32           # Smaller batch due to larger graph
-  epochs: 100
+  epochs: 150
   learning_rate: 0.0003    # Slightly lower for stability
   weight_decay: 1.0e-4
   patience: 20             # More patience for larger network
@@ -55,8 +55,8 @@ training:
 # Model Architecture (scaled for 785 nodes)
 model:
   in_dim: 7
-  hidden_dim: 128
-  num_layers: 4
+  hidden_dim: 256
+  num_layers: 5
   num_heads: 4
   dropout: 0.15
   edge_dim: 2

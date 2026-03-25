@@ -118,7 +118,7 @@ class EdgeGatedAttentionLayer(nn.Module):
         weighted_v = v_src * attn_weights.unsqueeze(-1)  # [E, H, D]
         
         # Scatter add to destination nodes
-        agg = torch.zeros(num_nodes, self.num_heads, self.head_dim, device=x.device)
+        agg = torch.zeros(num_nodes, self.num_heads, self.head_dim, device=x.device, dtype=weighted_v.dtype)
         dst_expanded = dst.unsqueeze(1).unsqueeze(2).expand(-1, self.num_heads, self.head_dim)
         agg.scatter_add_(0, dst_expanded, weighted_v)
         
@@ -138,20 +138,21 @@ class EdgeGatedAttentionLayer(nn.Module):
     def _scatter_softmax(self, scores: torch.Tensor, index: torch.Tensor, num_nodes: int) -> torch.Tensor:
         """Compute softmax over scores grouped by index (destination nodes)."""
         # scores: [E, H], index: [E]
-        # Subtract max for numerical stability
-        max_vals = torch.zeros(num_nodes, scores.size(1), device=scores.device)
+        # Work in float32 throughout to avoid AMP dtype mismatches, cast back at the end
+        orig_dtype = scores.dtype
+        scores = scores.float()
         idx_exp = index.unsqueeze(1).expand_as(scores)
+
+        max_vals = torch.zeros(num_nodes, scores.size(1), device=scores.device, dtype=torch.float32)
         max_vals.scatter_reduce_(0, idx_exp, scores, reduce='amax', include_self=False)
         max_vals = max_vals.clamp(min=-1e9)
-        
-        scores_shifted = scores - max_vals[index]
-        exp_scores = torch.exp(scores_shifted)
-        
-        # Sum per node
-        sum_exp = torch.zeros(num_nodes, scores.size(1), device=scores.device)
+
+        exp_scores = torch.exp(scores - max_vals[index])
+
+        sum_exp = torch.zeros(num_nodes, scores.size(1), device=scores.device, dtype=torch.float32)
         sum_exp.scatter_add_(0, idx_exp, exp_scores)
-        
-        return exp_scores / (sum_exp[index] + 1e-10)
+
+        return (exp_scores / (sum_exp[index] + 1e-10)).to(orig_dtype)
 
 
 class LeakDetectionGNN(nn.Module):

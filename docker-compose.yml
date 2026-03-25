@@ -1,0 +1,39 @@
+services:
+  train:
+    build: .
+    image: tarp-gpu
+    # Enable GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Mount these so outputs persist on your laptop
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+      - ./checkpoints:/app/checkpoints
+    # Override CMD to run a training script directly
+    # Change the command below to whichever script you want to run
+    command: python scripts/train_stage1.py
+
+  # Separate service for running the Streamlit app
+  app:
+    build: .
+    image: tarp-gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./data:/app/data
+      - ./results:/app/results
+      - ./checkpoints:/app/checkpoints
+    ports:
+      - "8501:8501"
+    command: streamlit run app/main.py --server.address=0.0.0.0
